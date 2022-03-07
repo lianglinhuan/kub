@@ -1,0 +1,167 @@
+#user  nobody;
+worker_processes        auto;
+worker_cpu_affinity     auto;
+worker_rlimit_nofile    65535;
+
+pid  /var/run/nginx.pid;
+
+events {
+    use epoll;
+    worker_connections  4096;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    server_tokens off; ## Don't show the nginx version number, a security best practice
+
+    gzip  on;
+    underscores_in_headers        on;
+    send_timeout                  3m;
+    sendfile                      on;
+    tcp_nopush                    on;
+    tcp_nodelay                   on;
+    keepalive_timeout             120;
+    server_names_hash_bucket_size 128;
+
+    # size limits
+    large_client_header_buffers 4 64k;
+
+    client_body_buffer_size  256k;
+    client_header_timeout    3m;
+    client_body_timeout      3m;
+    client_max_body_size     30m;
+
+    # proxy configuer
+    proxy_redirect             off;
+    proxy_set_header           Host $http_host;
+    proxy_set_header           X-Real-IP $remote_addr;
+    proxy_set_header           X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header           X-Forwarded-Proto   $scheme;
+    proxy_connect_timeout      120;
+    proxy_send_timeout         120;
+    proxy_read_timeout         120;
+    proxy_buffer_size          8k;
+    proxy_buffers              4 64k;
+    proxy_busy_buffers_size    128k;
+    proxy_temp_file_write_size 128k;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for" "$host" "$http_host" "$http_serverhost"';
+
+    access_log  /opt/nginx/logs/nginx_access.log main;
+    error_log   /opt/nginx/logs/nginx_error.log;
+
+    # 综合客运枢纽疏运组织决策分析系统(公网219.136.133.176:8092)
+    upstream kyfx-server1 {
+        server 10.88.100.123:8092 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 8092 default_server;
+        server_tokens off;
+
+        location / {
+            proxy_pass http://kyfx-server1;
+        }
+    }
+
+    # 综合客运枢纽疏运组织决策分析系统
+    upstream kyfx-server2 {
+        server 10.88.100.120:5000 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 5000 default_server;
+        server_tokens off;
+
+        location / {
+            proxy_pass http://kyfx-server2;
+        }
+    }
+
+    # 综合客运枢纽疏运组织决策分析系统(公网219.136.133.176:8095)
+    upstream kyfx-server-8095 {
+        server 10.88.100.123:8095 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 8095 default_server;
+        server_tokens off;
+
+        location / {
+            proxy_pass http://kyfx-server-8095;
+        }
+    }
+
+    # 重要站场等趋于人群检测分析系统(公网219.136.133.180:8090)
+    upstream zyzc-server-8090 {
+        server 10.88.100.129:8090 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 8090 default_server;
+        server_tokens off;
+
+        location / {
+            proxy_pass http://zyzc-server-8090;
+        }
+    }
+
+    # 人群监测系统应用服务-新(公网219.136.133.169:8097)
+    upstream zyzc-server-8097 {
+        #server 10.88.100.129:8080 max_fails=3 fail_timeout=10s;
+        server 10.89.48.31:8097 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen                    8097 ssl;
+        server_name               _;
+        server_tokens             off;
+        ssl_certificate           /opt/nginx/keys/server.full.pem;
+        ssl_certificate_key       /opt/nginx/keys/server.private.key;
+        ssl_session_timeout       5m;
+        ssl_ciphers               ECDHE-RSA-AES128-GCM-SHA256:ECDHE:ECDH:AES:HIGH:!NULL:!3DES:!aNULL:!MD5:!ADH:!RC4;
+        ssl_prefer_server_ciphers on;
+        ssl_protocols             TLSv1 TLSv1.1 TLSv1.2;
+
+        location / {
+            proxy_pass http://zyzc-server-8097;
+        }
+    }
+
+    # 综合客运应用服务(公网219.136.133.169:8096)
+    upstream zhky-server {
+        server 10.89.48.31:8096 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 8096 default_server;
+        server_tokens off;
+        proxy_buffer_size  128k;
+        proxy_buffers   32 32k;
+        proxy_busy_buffers_size 128k;
+
+        location / {
+            proxy_pass http://zhky-server;
+        }
+    }
+
+    # 综合客运系统4.0(公网219.136.133.176:8089)
+    upstream zkxt4-server {
+        server 10.89.48.31:8089 max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 8089 default_server;
+        server_tokens off;
+        proxy_buffer_size  128k;
+        proxy_buffers   32 32k;
+        proxy_busy_buffers_size 128k;
+
+        location / {
+            proxy_pass http://zkxt4-server;
+        }
+    }
+}

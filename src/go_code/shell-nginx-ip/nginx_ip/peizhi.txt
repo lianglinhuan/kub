@@ -1,0 +1,214 @@
+    user                    root;
+    worker_processes        auto;
+    worker_cpu_affinity     auto;
+    worker_rlimit_nofile    65535;
+
+    events {
+        use                 epoll;
+        multi_accept        on;
+        accept_mutex        on;
+        worker_connections  65535;
+    }
+
+    pid /opt/nginx/pids/nginx.pid;
+
+    http {
+        server_tokens                   off;
+        include                         mime.types;
+        default_type                    application/octet-stream;
+
+        log_format      cusformat '[$time_local] $http_x_forwarded_for - $server_name - $remote_addr - "$http_referer" "$request" $request_time $status - "$http_user_agent" - $upstream_addr $upstream_response_time $body_bytes_sent';
+        access_log      syslog:server=10.88.2.113 cusformat;
+        error_log       syslog:server=10.88.2.113 debug;
+        error_page      500 502 503 504 /50x.html;
+        error_page      400 401 402 403 404 /40x.html;
+
+        # gzip configuer
+            gzip                            on;
+            gzip_vary                       on;     # 和http头有关系，给代理服务器用的，有的浏览器支持压缩，有的不支持，避免浪费不支持的也压缩，根据客户端的HTTP头来判断，是否需要压缩
+            gzip_proxied                    any;    # 做前端代理时启用该选项，表示无论后端服务器的headers头返回什么信息，都无条件启用压缩
+            gzip_buffers                    16 64;
+            gzip_min_length                 1k;
+            gzip_comp_level                 4;      # 压缩率（1最小，9最大）
+            gzip_types                      text/plain text/xml text/css text/javascript application/javascript application/x-javascript application/json application/xml image/jpeg image/gif image/png;
+
+        # other configuer
+            send_timeout                    120;     # 根据访问的客户端类型不同进行调整，如果手机访问，不能设置太小
+            sendfile                        on;
+            tcp_nopush                      on;
+            tcp_nodelay                     on;
+            keepalive_timeout               60;     # 根据访问的客户端类型不同进行调整，如果手机访问，不能设置太小
+            server_names_hash_bucket_size   128;
+            #limit_conn_zone                 $binary_remote_addr zone=addr:16m;
+            #limit_conn                      addr 64;
+
+        # size limits
+            large_client_header_buffers     4 64k;
+            client_body_buffer_size         256k;
+            client_max_body_size            16m;
+            client_header_timeout           60;     # 根据访问的客户端类型不同进行调整，如果手机访问，不能设置太小
+            client_body_timeout             60;     # 根据访问的客户端类型不同进行调整，如果手机访问，不能设置太小
+            reset_timedout_connection       on;
+
+        # proxy configuer
+            proxy_redirect                  off;
+            proxy_set_header                Host $http_host;
+            proxy_set_header                X-Real-IP $remote_addr;
+            proxy_set_header                X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header                Connection "";
+            proxy_connect_timeout           120;
+            proxy_send_timeout              120;
+            proxy_read_timeout              120;
+            proxy_buffer_size               8k;
+            proxy_buffers                   4 64k;
+            proxy_busy_buffers_size         128k;
+            proxy_temp_file_write_size      16m;
+
+        # temp configuer
+            client_body_temp_path           /tmp/nginx/client 3 2;
+            proxy_temp_path                 /tmp/nginx/proxy 3 2;
+            fastcgi_temp_path               /tmp/nginx/fcgi 3 2;
+            uwsgi_temp_path                 /tmp/nginx/uwsgi 3 2;
+
+        # 提取客户端真实IP
+        map $http_x_forwarded_for $clientRealIp {
+            "" $remote_addr;
+            ~^(?P<firstAddr>[0-9\.]+),?.*$ $firstAddr;
+        }
+
+        # 监听服务配置
+        server {
+            listen          8000 default;
+            server_name     hxsq-ngxproxy-1;
+            index           index.d;
+
+            location = /50x.html { root html; }
+            location = /40x.html { root html; }
+            location = /favicon.ico {
+                log_not_found off;
+                access_log off;
+            }
+
+            # 监控
+            location /status {
+                check_status;
+                access_log off;
+            }
+        }
+
+        #############################
+        # 核心商圈卡口图片-服务租
+        #############################
+        upstream picservice{
+            server 10.89.19.50:7380 weight=40;
+
+            check interval=5000 rise=3 fall=5 timeout=10000 type=tcp;
+        }
+
+        # 监听服务配置
+        server {
+            listen          6380 default;
+            server_name     hxsq-ngxproxy-1;
+            index           index.d;
+
+            location = /50x.html { root html; }
+            location = /40x.html { root html; }
+            location = /favicon.ico {
+                log_not_found off;
+                access_log off;
+            }
+
+            # 核心商圈卡口图片
+            location /cbc.v1/images/ {
+                proxy_next_upstream http_500 http_502 http_503 http_504 error timeout invalid_header;
+                proxy_pass http://picservice;
+            }
+        }
+
+        #############################
+        # 核心商圈卡口数据-服务租
+        #############################
+        upstream kksjservice{
+            server 10.89.19.54:29020;
+            check interval=5000 rise=3 fall=5 timeout=10000 type=tcp;
+        }
+
+        # 监听服务配置
+        server {
+            listen          29020 default;
+            server_name     hxsq-ngxproxy-1;
+            index           index.d;
+
+            location = /50x.html { root html; }
+            location = /40x.html { root html; }
+            location = /favicon.ico {
+                log_not_found off;
+                access_log off;
+            }
+
+            # 核心商圈卡口图片
+            location / {
+                send_timeout            600;
+                keepalive_timeout       600;
+                client_body_timeout     600;
+                proxy_connect_timeout   600;
+                proxy_send_timeout      600;
+                proxy_read_timeout      600;
+
+                proxy_next_upstream http_500 http_502 http_503 http_504 error timeout invalid_header;
+                proxy_pass http://kksjservice;
+            }
+        }
+
+        #############################
+        # 出租车稽查二期图片访问
+        #############################
+        server {
+            listen          8380 default;
+            server_name     hxsq-ngxproxy-1;
+            index           index.d;
+
+            location = /50x.html { root html; }
+            location = /40x.html { root html; }
+            location = /favicon.ico {
+                log_not_found off;
+                access_log off;
+            }
+
+            # 出租车稽查二期图片访问
+            #
+            location /kakou/ {
+                proxy_next_upstream http_500 http_502 http_503 http_504 error timeout invalid_header;
+                # URL 中 kakou 匹配后会被替换为 /cbc.v1/images/ ，kakou后面uri则接续
+                # curl -v http://10.91.137.90:8380/kakou/objectid/603dda552171c50f6497ec2a -> http://10.88.30.151:8380/cbc.v1/images/objectid/603dda552171c50f6497ec2a
+                proxy_pass http://10.88.30.151:8380/cbc.v1/images/;
+            }
+            location /realcar/ {
+                proxy_next_upstream http_500 http_502 http_503 http_504 error timeout invalid_header;
+                proxy_pass http://10.88.30.151:8381/cbc.v1/images/;
+            }
+            location /alarm/ {
+                proxy_next_upstream http_500 http_502 http_503 http_504 error timeout invalid_header;
+                proxy_pass http://10.88.30.151:8382/cbc.v1/images/;
+            }
+        }
+    }
+
+    ###########
+    # MONGODB #
+    ###########
+    stream {
+        upstream kksjmongodbServers {
+            #hash $remote_addr consistent;
+            server 10.89.19.54:27020 max_fails=3 fail_timeout=10s weight=2;
+        }
+
+        server {
+            listen                27020;
+            tcp_nodelay           on;
+            proxy_connect_timeout 600s;
+            proxy_timeout         600s;
+            proxy_buffer_size     512k;
+            proxy_pass            kksjmongodbServers;
+        }
+    }
